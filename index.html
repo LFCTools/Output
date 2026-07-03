@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LFC Ticket Sale Alert Generator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen p-5 sm:p-10">
+
+    <div class="max-w-4xl mx-auto space-y-8">
+        <!-- Header -->
+        <div class="text-center">
+            <h1 class="text-3xl font-bold text-red-500 mb-2">⚽ LFC Ticket Alert Generator</h1>
+            <p class="text-gray-400">Paste the ticket page text info to generate your tweet format and Google Calendar buttons.</p>
+        </div>
+
+        <!-- Input Section -->
+        <div class="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700 space-y-4">
+            <div>
+                <label class="block text-sm font-semibold mb-2 text-gray-300">Match Name (e.g., Sunderland or Real Madrid)</label>
+                <input type="text" id="matchName" placeholder="Sunderland" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:border-red-500">
+            </div>
+
+            <div>
+                <label class="block text-sm font-semibold mb-2 text-gray-300">Criteria</label>
+                <select id="criteria" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:border-red-500">
+                    <option value="All Members">All Members</option>
+                    <option value="4+ Members">4+ Members</option>
+                </select>
+            </div>
+
+            <div>
+                <label class="block text-sm font-semibold mb-2 text-gray-300">Paste Ticket Page Raw Info / Dates Text</label>
+                <textarea id="rawText" rows="6" placeholder="Paste text from LFC site containing registration, sale, ballot, and match dates..." class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:border-red-500 font-mono text-xs"></textarea>
+            </div>
+
+            <button onclick="processData()" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200">
+                Generate Tweet & Calendar Buttons
+            </button>
+        </div>
+
+        <!-- Output Section (Hidden by default) -->
+        <div id="outputSection" class="hidden space-y-6">
+            <!-- Tweet Output -->
+            <div class="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="text-lg font-bold text-gray-200">🐦 Generated Tweet</h3>
+                    <button onclick="copyTweet()" class="bg-blue-600 hover:bg-blue-700 text-xs text-white px-3 py-1.5 rounded transition">Copy Tweet</button>
+                </div>
+                <pre id="tweetOutput" class="whitespace-pre-wrap bg-gray-950 p-4 rounded-lg border border-gray-800 font-sans text-sm text-gray-200"></pre>
+            </div>
+
+            <!-- Calendar Buttons Output -->
+            <div class="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
+                <h3 class="text-lg font-bold text-gray-200 mb-4">📅 Google Calendar Buttons</h3>
+                <div id="calendarButtons" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <!-- Buttons will inject here Dynamically -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function parseLFCDate(text, keywords) {
+            // Flexible regex to find dates like "11am on Tuesday 18 November" or "10am on Thursday 20 November"
+            for (let kw of keywords) {
+                let index = text.toLowerCase().indexOf(kw.toLowerCase());
+                if (index !== -1) {
+                    // Snippet around the keyword
+                    let snippet = text.substring(index, index + 300);
+                    // Try to catch times and dates
+                    let timeMatch = snippet.match(/(\d{1,2}(?::\d{2})?(?:am|pm))/i);
+                    let dayMatch = snippet.match(/(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]* \d{1,2} [A-Z][a-z]*/i);
+                    
+                    if (timeMatch && dayMatch) {
+                        return `${dayMatch[0]}, ${timeMatch[0]}`;
+                    }
+                }
+            }
+            return "TBA";
+        }
+
+        function formatGCalDate(dateStr) {
+            if (!dateStr || dateStr === "TBA") return null;
+            
+            // Basic extraction logic for GCal format (YYYYMMDDTHHMMSSZ)
+            // Defaulting to year 2025/2026 based on logic
+            const currentYear = 2025; 
+            const months = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
+            
+            try {
+                const cleanStr = dateStr.replace(/,/g, '');
+                const parts = cleanStr.split(/\s+/); // [DayName, DayNum, Month, Time]
+                
+                const day = parseInt(parts[1]);
+                const monthName = parts[2].toLowerCase().substring(0, 3);
+                const month = months[monthName];
+                
+                let timePart = parts[3].toLowerCase();
+                let isPm = timePart.includes('pm');
+                let timeNums = timePart.replace(/(am|pm)/, '').split(':');
+                let hours = parseInt(timeNums[0]);
+                let minutes = timeNums[1] ? parseInt(timeNums[1]) : 0;
+                
+                if (isPm && hours < 12) hours += 12;
+                if (!isPm && hours === 12) hours = 0;
+                
+                // Construct Date object as UTC (adjusted for UK times)
+                let d = new Date(Date.UTC(currentYear, month, day, hours, minutes));
+                
+                let isoStr = d.toISOString().replace(/[:\-]/g, '').split('.')[0] + 'Z';
+                // End date + 1 hour for standard duration
+                let dEnd = new Date(d.getTime() + 60 * 60 * 1000);
+                let isoStrEnd = dEnd.toISOString().replace(/[:\-]/g, '').split('.')[0] + 'Z';
+                
+                return `${isoStr}/${isoStrEnd}`;
+            } catch(e) {
+                return null;
+            }
+        }
+
+        function processData() {
+            const matchName = document.getElementById('matchName').value || "Match Name";
+            const criteria = document.getElementById('criteria').value;
+            const rawText = document.getElementById('rawText').value;
+
+            // Target parsing blocks
+            const regOpen = parseLFCDate(rawText, ["registration for the additional", "opens:"]);
+            const regClose = parseLFCDate(rawText, ["until 10am", "closes:"]);
+            const linksSent = parseLFCDate(rawText, ["sent a unique link", "links sent:"]).split(',')[0]; // Just the date element
+            
+            const saleDate = parseLFCDate(rawText, ["ticket sale", "from 11am on Thursday 27 November"]);
+            const ballotOpen = parseLFCDate(rawText, ["ballot registration will open", "local members sale"]);
+            const ballotClose = parseLFCDate(rawText, ["close at 9am", "closes:"]);
+            const matchDate = parseLFCDate(rawText, [matchName + " v", "Wed 3 Dec"]);
+
+            // Build Tweet Template
+            const saleLabel = criteria === "4+ Members" ? "Sale (4+ Members) •" : "Sale •";
+            
+            const tweet = `${matchName} (H) - Sale Details 📢\n\n` +
+                          `Registration (${criteria}) 📝\n` +
+                          `• Opens: ${regOpen}\n` +
+                          `• Closes: ${regClose}\n` +
+                          `• Links sent: ${linksSent}\n\n` +
+                          `${saleLabel} ${saleDate} 🎟️\n\n` +
+                          `Local & YA Ballot 🗳️\n` +
+                          `• Opens: ${ballotOpen}\n` +
+                          `• Closes: ${ballotClose}\n` +
+                          `• Results: TBA\n\n` +
+                          `Match Date • ${matchDate} 🏟️`;
+
+            document.getElementById('tweetOutput').innerText = tweet;
+
+            // Generate Calendar URL Helpers
+            const events = [
+                { name: `LFC v ${matchName} - Registration Opens`, time: regOpen },
+                { name: `LFC v ${matchName} - Registration Closes`, time: regClose },
+                { name: `LFC v ${matchName} - Unique Link Sent`, time: linksSent, isAllDay: true },
+                { name: `LFC v ${matchName} - Ticket Sale`, time: saleDate },
+                { name: `LFC v ${matchName} - Local Ballot Opens`, time: ballotOpen },
+                { name: `LFC v ${matchName} - Local Ballot Closes`, time: ballotClose }
+            ];
+
+            const btnContainer = document.getElementById('calendarButtons');
+            btnContainer.innerHTML = ''; // reset
+
+            events.forEach(ev => {
+                let gCalUrl = '';
+                let gDates = formatGCalDate(ev.time);
+                
+                if (ev.isAllDay && gDates) {
+                    // All day format YYYYMMDD/YYYYMMDD
+                    let dayOnly = gDates.split('T')[0];
+                    gCalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(ev.name)}&dates=${dayOnly}/${dayOnly}`;
+                } else if (gDates) {
+                    gCalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(ev.name)}&dates=${gDates}`;
+                } else {
+                    gCalUrl = '#';
+                }
+
+                const btn = document.createElement('a');
+                btn.href = gCalUrl;
+                btn.target = "_blank";
+                btn.className = "flex items-center justify-between bg-gray-700 hover:bg-gray-600 p-3 rounded-lg border border-gray-600 transition text-sm font-medium text-white";
+                btn.innerHTML = `<span>📅 Add ${ev.name.split(' - ')[1]}</span> <span class="text-xs text-gray-400">${ev.time}</span>`;
+                if (gCalUrl === '#') btn.classList.add('opacity-50', 'pointer-events-none');
+                btnContainer.appendChild(btn);
+            });
+
+            document.getElementById('outputSection').classList.remove('hidden');
+        }
+
+        function copyTweet() {
+            const tweetText = document.getElementById('tweetOutput').innerText;
+            navigator.clipboard.writeText(tweetText);
+            alert('Tweet copied to clipboard!');
+        }
+    </script>
+</body>
+</html>
